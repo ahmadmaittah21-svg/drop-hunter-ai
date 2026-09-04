@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from "next/server";
 export const dynamic = 'force-dynamic';
 import { prisma } from "@/lib/db";
@@ -38,3 +39,4 @@ export const dynamic = 'force-dynamic';
   return NextResponse.json({ user: { id: user.id, email: user.email, name: user.name } });
 export const dynamic = 'force-dynamic';
 }
+
