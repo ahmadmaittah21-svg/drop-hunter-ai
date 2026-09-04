@@ -1,1 +1,1 @@
-/** @type {import('next').NextConfig} */`nconst nextConfig = { typescript: { ignoreBuildErrors: true }, eslint: { ignoreDuringBuilds: true } };`nexport default nextConfig;
+/** @type {import('next').NextConfig} */`nconst nextConfig = { typescript: { ignoreBuildErrors: true }, eslint: { ignoreDuringBuilds: true }, output: 'standalone' };`nexport default nextConfig;
