@@ -1,0 +1,375 @@
+// DROP HUNTER AI — Database Schema
+// PostgreSQL + Prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// USERS & AUTH
+// ─────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  passwordHash  String?
+  name          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  products      Product[]
+  listings      Listing[]
+  searches      ProductSearch[]
+  savedProducts SavedProduct[]
+  credentials   ApiCredential[]
+  preferences   UserPreference?
+}
+
+model UserPreference {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  defaultMarketplace  String   @default("ebay-us")
+  defaultCurrency     String   @default("USD")
+  defaultEbayFeePct   Float    @default(13.25)
+  defaultPaymentFeePct Float   @default(2.9)
+  defaultShippingCost Float    @default(0)
+  minProfitTarget     Float    @default(10)
+  minMarginTarget     Float    @default(20)
+  titleCharLimit      Int      @default(80)
+  aiTone              String   @default("professional")
+  theme               String   @default("system")
+  demoMode            Boolean  @default(true)
+
+  createdAt           DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+// Encrypted user-provided API keys (OpenAI, eBay, etc.)
+model ApiCredential {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider      String   // "openai" | "ebay" | "aliexpress"
+  encryptedValue String  // AES-encrypted JSON blob
+  label         String?
+  isActive      Boolean  @default(true)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, provider, label])
+}
+
+// ─────────────────────────────────────────────
+// PRODUCTS
+// ─────────────────────────────────────────────
+
+model Product {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  sourceUrl       String
+  sourceMarketplace String @default("aliexpress")
+  sourceProductId String?
+
+  title           String
+  brand           String?
+  model           String?
+  sku             String?
+
+  currency        String   @default("USD")
+  price           Float?
+  discountPrice   Float?
+  rating          Float?
+  reviewCount     Int?
+  orderCount      Int?
+
+  sellerName      String?
+  sellerRating    Float?
+
+  weightGrams     Float?
+  dimensions      String?  // "L x W x H cm" free text — never fabricated
+
+  shippingCost    Float?
+  shippingInfo    String?
+
+  description     String?  @db.Text
+
+  // Raw provider payload preserved verbatim, never mutated
+  rawData         Json
+
+  // Normalized structured data derived from rawData
+  normalizedData  Json
+
+  status          ProductStatus @default(ANALYZED)
+
+  images          ProductImage[]
+  variations      ProductVariation[]
+  specifications  ProductSpecification[]
+  analysis        ProductAnalysis?
+  profitCalcs     ProfitCalculation[]
+  listings        Listing[]
+  policyChecks    PolicyCheck[]
+  savedBy         SavedProduct[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+enum ProductStatus {
+  IMPORTING
+  ANALYZED
+  FAILED
+  ARCHIVED
+}
+
+model ProductImage {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  url         String
+  isMain      Boolean  @default(false)
+  isSelected  Boolean  @default(true)
+  position    Int      @default(0)
+
+  createdAt   DateTime @default(now())
+}
+
+model ProductVariation {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  type        String   // "Color" | "Size" | "Style" | custom
+  value       String
+  priceDelta  Float?
+  imageUrl    String?
+
+  createdAt   DateTime @default(now())
+}
+
+model ProductSpecification {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  key         String
+  value       String
+  source      SpecSource @default(EXTRACTED)
+
+  createdAt   DateTime @default(now())
+}
+
+enum SpecSource {
+  EXTRACTED   // came directly from source data
+  AI_MAPPED   // AI mapped it into an eBay item specific
+  MANUAL      // user-entered
+}
+
+// AI-generated analysis, kept separate from factual product data
+model ProductAnalysis {
+  id                    String   @id @default(cuid())
+  productId             String   @unique
+  product               Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  winningScore          Int?
+  scoreBreakdown         Json     // { demand, profitPotential, competition, trend, priceGap, shipping, reviews, seasonality, ebayFit }
+  scoreConfidence       String   @default("LOW") // HIGH | MEDIUM | LOW — reflects data completeness
+
+  whyItMayWork          String?  @db.Text
+  advantages            Json?    // string[]
+  risks                 Json?    // string[]
+  competitionConcerns   String?  @db.Text
+  pricingObservations   String?  @db.Text
+  shippingConcerns      String?  @db.Text
+  seasonality           String?
+  targetCustomer        String?
+  suggestedKeywords     Json?    // string[]
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model ProfitCalculation {
+  id              String   @id @default(cuid())
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  productCost     Float
+  shippingCost    Float
+  sellingPrice    Float
+  ebayFeePct      Float
+  paymentFeePct   Float
+  otherCosts      Float    @default(0)
+
+  grossRevenue    Float
+  estimatedFees   Float
+  totalCost       Float
+  estimatedProfit Float
+  profitMargin    Float
+  roi             Float
+
+  createdAt       DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// LISTINGS
+// ─────────────────────────────────────────────
+
+model Listing {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  title           String
+  originalTitle   String?
+  description     String   @db.Text
+  categoryId      String?
+  categoryName    String?
+  categoryConfidence String?
+  condition       String   @default("New")
+
+  sellingPrice    Float?
+  quantity        Int      @default(1)
+
+  qualityScore    Int?
+  qualityFactors  Json?    // { title, description, specifics, images, category, keywords }
+  strengths       Json?
+  warnings        Json?
+  recommendations Json?
+
+  status          ListingStatus @default(DRAFT)
+
+  images          ListingImage[]
+  specifics       ListingSpecific[]
+  policyChecks    PolicyCheck[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([productId])
+}
+
+enum ListingStatus {
+  DRAFT
+  READY
+  EXPORTED
+  PUBLISHED
+}
+
+model ListingImage {
+  id          String   @id @default(cuid())
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  url         String
+  isMain      Boolean  @default(false)
+  position    Int      @default(0)
+}
+
+model ListingSpecific {
+  id          String   @id @default(cuid())
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  name        String
+  value       String
+  confidence  String   @default("LOW") // HIGH | MEDIUM | LOW
+  source      SpecSource @default(AI_MAPPED)
+}
+
+// ─────────────────────────────────────────────
+// POLICY / RISK
+// ─────────────────────────────────────────────
+
+model PolicyCheck {
+  id          String   @id @default(cuid())
+  productId   String?
+  product     Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  listingId   String?
+  listing     Listing? @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  level       PolicyLevel
+  category    String   // e.g. "trademark", "medical-claim", "restricted-item"
+  message     String
+  fieldRef    String?  // which field triggered it (title, description, specifics.Brand, ...)
+
+  createdAt   DateTime @default(now())
+}
+
+enum PolicyLevel {
+  GREEN
+  YELLOW
+  RED
+}
+
+// ─────────────────────────────────────────────
+// RESEARCH / PRODUCT RADAR (architecture for future Product Hunter)
+// ─────────────────────────────────────────────
+
+model ProductSearch {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  marketplace     String   @default("aliexpress")
+  category        String?
+  maxCost         Float?
+  minSellingPrice Float?
+  minProfit       Float?
+  minMargin       Float?
+  maxCompetition  Float?
+  minRating       Float?
+  minOrders       Int?
+  seasonality     String?  // "evergreen" | "seasonal" | "trending"
+
+  resultsCount    Int      @default(0)
+  status          SearchStatus @default(PENDING)
+
+  createdAt       DateTime @default(now())
+}
+
+enum SearchStatus {
+  PENDING
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+model SavedProduct {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, productId])
+}
+
+model KeywordSuggestion {
+  id          String   @id @default(cuid())
+  keyword     String
+  category    String?
+  relevance   Float?
+  source      String   @default("ai") // "ai" | "manual" | "trend-provider"
+
+  createdAt   DateTime @default(now())
+}
